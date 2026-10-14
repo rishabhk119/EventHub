@@ -34,6 +34,48 @@ const port = process.env.PORT || 4000
 app.use(cors({ origin: allowedOrigins }))
 app.use(express.json())
 
+let cachedDbPromise = null
+
+async function connectDB() {
+  if (mongoose.connection.readyState >= 1) {
+    return
+  }
+  if (!cachedDbPromise) {
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI is not set')
+    }
+    cachedDbPromise = mongoose.connect(process.env.MONGODB_URI).then((m) => {
+      console.log('MongoDB connected')
+      return m
+    })
+  }
+  await cachedDbPromise
+}
+
+app.use(async (req, res, next) => {
+  try {
+    if (process.env.MONGODB_URI) {
+      await connectDB()
+    }
+    next()
+  } catch (error) {
+    console.error('MongoDB connection error:', error.message)
+    next(error)
+  }
+})
+
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'EventHub API running',
+    endpoints: {
+      health: '/api/health',
+      events: '/api/events',
+      auth: '/api/auth'
+    }
+  })
+})
+
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
@@ -51,9 +93,7 @@ app.use(errorHandler)
 
 async function startServer() {
   try {
-    await mongoose.connect(process.env.MONGODB_URI)
-    console.log('MongoDB connected')
-
+    await connectDB()
     httpServer.listen(port, () => {
       console.log(`Server running on port ${port}`)
     })
@@ -63,4 +103,8 @@ async function startServer() {
   }
 }
 
-startServer()
+if (!process.env.VERCEL) {
+  startServer()
+}
+
+export default app

@@ -1,0 +1,53 @@
+services:
+  mongo:
+    image: mongo:8.0
+    container_name: eventhub-compose-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - eventhub-network
+
+  server:
+    build:
+      context: ./server
+    container_name: eventhub-compose-server
+    restart: unless-stopped
+    env_file:
+      - ./server/.env
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      MONGODB_URI: mongodb://mongo:27017/eventhub
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4000:4000"
+    networks:
+      - eventhub-network
+
+  client:
+    build:
+      context: ./client
+    container_name: eventhub-compose-client
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "127.0.0.1:3000:80"
+    networks:
+      - eventhub-network
+
+volumes:
+  mongo_data:
+
+networks:
+  eventhub-network:
+    driver: bridge

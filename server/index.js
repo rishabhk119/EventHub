@@ -36,6 +36,64 @@ app.use(express.json())
 
 let cachedDbPromise = null
 
+function formatMongoUri(uri) {
+  if (!uri || typeof uri !== 'string') return uri
+  let cleanUri = uri.trim()
+  if ((cleanUri.startsWith('"') && cleanUri.endsWith('"')) || (cleanUri.startsWith("'") && cleanUri.endsWith("'"))) {
+    cleanUri = cleanUri.slice(1, -1).trim()
+  }
+  if (cleanUri.startsWith('MONGODB_URI=')) {
+    cleanUri = cleanUri.replace(/^MONGODB_URI=\s*/, '').trim()
+  }
+
+  const protoMatch = cleanUri.match(/^(mongodb(?:\+srv)?:\/\/)(.*)$/)
+  if (!protoMatch) return cleanUri
+
+  const scheme = protoMatch[1]
+  const remainder = protoMatch[2]
+
+  const lastAt = remainder.lastIndexOf('@')
+  if (lastAt === -1) return cleanUri
+
+  const authPart = remainder.slice(0, lastAt)
+  const hostPart = remainder.slice(lastAt + 1)
+
+  const colonIdx = authPart.indexOf(':')
+  if (colonIdx === -1) return cleanUri
+
+  let username = authPart.slice(0, colonIdx)
+  let password = authPart.slice(colonIdx + 1)
+
+  if (password.startsWith('<') && password.endsWith('>')) {
+    password = password.slice(1, -1)
+  }
+  if (username.startsWith('<') && username.endsWith('>')) {
+    username = username.slice(1, -1)
+  }
+
+  const safeEncode = (str) => {
+    try {
+      return encodeURIComponent(decodeURIComponent(str))
+    } catch {
+      return encodeURIComponent(str)
+    }
+  }
+
+  const encodedUser = safeEncode(username)
+  const encodedPass = safeEncode(password)
+
+  let finalHostPart = hostPart
+  if (!finalHostPart.includes('/')) {
+    finalHostPart += '/eventhub?retryWrites=true&w=majority'
+  } else if (finalHostPart.endsWith('/')) {
+    finalHostPart += 'eventhub?retryWrites=true&w=majority'
+  } else if (finalHostPart.endsWith('/?')) {
+    finalHostPart = finalHostPart.replace('/?', '/eventhub?')
+  }
+
+  return `${scheme}${encodedUser}:${encodedPass}@${finalHostPart}`
+}
+
 async function connectDB() {
   if (mongoose.connection.readyState >= 1) {
     return
@@ -44,7 +102,8 @@ async function connectDB() {
     if (!process.env.MONGODB_URI) {
       throw new Error('MONGODB_URI is not set')
     }
-    cachedDbPromise = mongoose.connect(process.env.MONGODB_URI).then((m) => {
+    const connectionUri = formatMongoUri(process.env.MONGODB_URI)
+    cachedDbPromise = mongoose.connect(connectionUri).then((m) => {
       console.log('MongoDB connected')
       return m
     })
@@ -77,9 +136,11 @@ app.get('/', (req, res) => {
 })
 
 app.get('/api/health', (req, res) => {
+  const isDbConnected = mongoose.connection.readyState >= 1
   res.json({
     success: true,
-    message: 'EventHub API running'
+    message: 'EventHub API running',
+    database: isDbConnected ? 'connected' : 'disconnected'
   })
 })
 

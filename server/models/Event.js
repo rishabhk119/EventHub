@@ -25,7 +25,12 @@ const eventSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    // 0 means unlimited seats
     capacity: {
+      type: Number,
+      default: 0
+    },
+    registeredCount: {
       type: Number,
       default: 0
     }

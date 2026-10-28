@@ -12,7 +12,7 @@ export default function NotificationPanel({ notifications, connected }) {
         {notifications.length === 0 ? (
           <p className="text-sm text-gray-600">Waiting for new event announcements...</p>
         ) : notifications.map(item => (
-          <p key={item.id} className="rounded-lg bg-white p-3 text-sm text-indigo-800">
+          <p key={item.key} className="rounded-lg bg-white p-3 text-sm text-indigo-800">
             {item.message}
           </p>
         ))}

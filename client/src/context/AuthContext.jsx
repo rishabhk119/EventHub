@@ -1,39 +1,72 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { apiRequest } from '../lib/api'
 
 const AuthContext = createContext(null)
+const STORAGE_KEY = 'eventhub_auth'
+
+function isTokenExpired(token) {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now()
+  } catch {
+    return true
+  }
+}
+
+function loadStoredAuth() {
+  try {
+    // Drop the old fake-login entry from before real auth existed
+    localStorage.removeItem('eventhub_user')
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY))
+    if (stored?.user && stored?.token && !isTokenExpired(stored.token)) {
+      return stored
+    }
+  } catch {
+    // ignore unreadable storage
+  }
+  return null
+}
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    try {
-      const storedUser = localStorage.getItem('eventhub_user')
-      return storedUser ? JSON.parse(storedUser) : null
-    } catch {
-      return null
-    }
-  })
+  const [auth, setAuth] = useState(loadStoredAuth)
 
   useEffect(() => {
-    if (user) {
-      localStorage.setItem('eventhub_user', JSON.stringify(user))
-    } else {
-      localStorage.removeItem('eventhub_user')
+    try {
+      if (auth) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(auth))
+      } else {
+        localStorage.removeItem(STORAGE_KEY)
+      }
+    } catch {
+      // storage unavailable (private mode etc.); session still works in memory
     }
-  }, [user])
+  }, [auth])
 
-  function login(email, customRole) {
-    const role =
-      customRole ||
-      (email.toLowerCase().includes('admin') ? 'admin' : 'student')
-    setUser({ email, role })
+  // Both endpoints respond with { success, data: { user, token } }
+  async function login(email, password) {
+    const payload = await apiRequest('/api/auth/login', {
+      method: 'POST',
+      body: { email, password },
+    })
+    setAuth(payload.data)
+    return payload.data.user
   }
 
-  function logout() {
-    setUser(null)
-    localStorage.removeItem('eventhub_user')
+  async function register(name, email, password) {
+    const payload = await apiRequest('/api/auth/register', {
+      method: 'POST',
+      body: { name, email, password },
+    })
+    setAuth(payload.data)
+    return payload.data.user
   }
+
+  const logout = useCallback(() => {
+    setAuth(null)
+  }, [])
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user: auth?.user ?? null, token: auth?.token ?? null, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   )

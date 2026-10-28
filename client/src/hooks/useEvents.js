@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react'
-
-const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/$/, '')
+import { useCallback, useEffect, useState } from 'react'
+import { API_BASE_URL } from '../lib/api'
 
 export function useEvents() {
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const reloadEvents = async () => {
-    setLoading(true)
-    setError(null)
+  // silent: refetch in the background (e.g. after a live notification) without the loading skeleton
+  const reloadEvents = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true)
+      setError(null)
+    }
     try {
       const response = await fetch(`${API_BASE_URL}/api/events`)
       if (!response.ok) {
@@ -22,17 +24,22 @@ export function useEvents() {
       } else {
         setEvents([])
       }
+      setError(null)
     } catch {
-      setError('Unable to load events from the database.')
-      setEvents([])
+      if (!silent) {
+        setError('Unable to load events from the database.')
+        setEvents([])
+      }
     } finally {
-      setLoading(false)
+      if (!silent) {
+        setLoading(false)
+      }
     }
-  }
+  }, [])
 
   useEffect(() => {
     reloadEvents()
-  }, [])
+  }, [reloadEvents])
 
   return { events, loading, error, reloadEvents }
 }

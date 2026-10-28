@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useEvents } from '../hooks/useEvents'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useNotifications } from '../hooks/useNotifications'
+import { apiRequest } from '../lib/api'
 import NotificationPanel from '../components/NotificationPanel'
+import EventForm from '../components/EventForm'
 
 // Visual styling per category (data comes from the custom hook, styling stays in the UI layer)
 const categoryStyles = {
@@ -39,11 +41,17 @@ const filterTabs = ['All', 'Technology', 'Hackathon', 'Workshop', 'Cultural']
 
 export default function Dashboard() {
   const { events, loading, error, reloadEvents } = useEvents()
-  const { notifications, connected } = useNotifications()
+  // Any created/updated/deleted notification refreshes the list in the background
+  const handleLiveNotification = useCallback(() => reloadEvents({ silent: true }), [reloadEvents])
+  const { notifications, connected } = useNotifications(handleLiveNotification)
   const [registeredIds, setRegisteredIds] = useState([])
+  const [pendingIds, setPendingIds] = useState([])
   const [activeFilter, setActiveFilter] = useState('All')
-  const { user, logout } = useAuth()
+  const [editingEvent, setEditingEvent] = useState(null) // null = closed, {} = create, event = edit
+  const [actionError, setActionError] = useState('')
+  const { user, token, logout } = useAuth()
   const navigate = useNavigate()
+  const isAdmin = user?.role === 'admin'
 
   useEffect(() => {
     if (!user) {
@@ -51,10 +59,66 @@ export default function Dashboard() {
     }
   }, [user, navigate])
 
-  const toggleRegister = (id) => {
-    setRegisteredIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    )
+  useEffect(() => {
+    if (!token) return
+    apiRequest('/api/events/registrations/me', { token })
+      .then((payload) => setRegisteredIds(payload.data))
+      .catch((err) => {
+        if (err.status === 401) logout()
+      })
+  }, [token, logout])
+
+  // Run an authenticated request; an expired/invalid token sends the user back to login
+  const authedRequest = async (path, options) => {
+    try {
+      return await apiRequest(path, { ...options, token })
+    } catch (err) {
+      if (err.status === 401) {
+        logout()
+      }
+      throw err
+    }
+  }
+
+  const toggleRegister = async (id) => {
+    const isRegistered = registeredIds.includes(id)
+    setActionError('')
+    setPendingIds((prev) => [...prev, id])
+    try {
+      await authedRequest(`/api/events/${id}/register`, { method: isRegistered ? 'DELETE' : 'POST' })
+      setRegisteredIds((prev) =>
+        isRegistered ? prev.filter((item) => item !== id) : [...prev, id]
+      )
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      setPendingIds((prev) => prev.filter((item) => item !== id))
+      reloadEvents({ silent: true })
+    }
+  }
+
+  const saveEvent = async (payload) => {
+    const id = editingEvent?._id
+    await authedRequest(id ? `/api/events/${id}` : '/api/events', {
+      method: id ? 'PUT' : 'POST',
+      body: payload,
+    })
+    setEditingEvent(null)
+    reloadEvents({ silent: true })
+  }
+
+  const deleteEvent = async (event) => {
+    if (!window.confirm(`Delete "${event.title}"? This also removes all registrations for it.`)) {
+      return
+    }
+    setActionError('')
+    try {
+      await authedRequest(`/api/events/${event._id}`, { method: 'DELETE' })
+    } catch (err) {
+      setActionError(err.message)
+    } finally {
+      reloadEvents({ silent: true })
+    }
   }
 
   const eventsList = Array.isArray(events)
@@ -67,6 +131,8 @@ export default function Dashboard() {
     activeFilter === 'All'
       ? eventsList
       : eventsList.filter((e) => e.category === activeFilter)
+
+  const enrolledCount = eventsList.filter((e) => registeredIds.includes(e._id)).length
 
   if (!user) {
     return null
@@ -118,7 +184,7 @@ export default function Dashboard() {
         <div className="animate-slide-up bg-gradient-to-br from-zinc-50 via-violet-50/30 to-indigo-50/30 border border-zinc-200/80 rounded-3xl p-6 sm:p-8 mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-violet-100/80 to-indigo-100/60 text-violet-700 mb-3">
-              <span>Hi, {user.email} ({user.role})</span>
+              <span>Hi, {user.name || user.email} ({user.role})</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight">
               Your Dashboard
@@ -137,7 +203,7 @@ export default function Dashboard() {
               <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Available</p>
             </div>
             <div className="bg-white border border-emerald-100 rounded-2xl px-4 py-3 text-center min-w-[100px] shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-              <span className="text-xl font-extrabold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">{registeredIds.length}</span>
+              <span className="text-xl font-extrabold bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">{enrolledCount}</span>
               <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Enrolled</p>
             </div>
           </div>
@@ -172,7 +238,7 @@ export default function Dashboard() {
             )}
             <button
               id="refresh-events"
-              onClick={reloadEvents}
+              onClick={() => reloadEvents()}
               disabled={loading}
               className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl shadow-md shadow-violet-500/20 hover:shadow-violet-500/30 hover:-translate-y-0.5 active:scale-98 transition-all duration-200 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
             >
@@ -207,7 +273,7 @@ export default function Dashboard() {
           <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-6 text-center">
             <p className="text-sm font-semibold text-red-700">{error}</p>
             <button
-              onClick={reloadEvents}
+              onClick={() => reloadEvents()}
               className="mt-4 px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-md shadow-red-500/20 active:scale-98 transition-all duration-200 cursor-pointer"
             >
               Try Again
@@ -216,9 +282,24 @@ export default function Dashboard() {
         )}
 
         {/* Admin Notice */}
-        {user?.role === 'admin' && (
-          <div className="mb-6 p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-800 text-sm font-medium animate-fade-in">
-            Admin access: You can manage EventHub events.
+        {isAdmin && (
+          <div className="mb-6 p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-800 text-sm font-medium animate-fade-in flex flex-wrap items-center justify-between gap-3">
+            <span>Admin access: You can manage EventHub events.</span>
+            <button
+              id="create-event"
+              onClick={() => setEditingEvent({})}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl shadow-md shadow-violet-500/20 hover:-translate-y-0.5 active:scale-98 transition-all duration-200 cursor-pointer"
+            >
+              <span className="font-bold">+</span> New Event
+            </button>
+          </div>
+        )}
+
+        {/* Action Error (register / delete failures) */}
+        {actionError && (
+          <div role="alert" className="mb-6 p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-semibold flex items-center justify-between gap-3 animate-fade-in">
+            <span>{actionError}</span>
+            <button onClick={() => setActionError('')} aria-label="Dismiss" className="text-red-400 hover:text-red-700 cursor-pointer">✕</button>
           </div>
         )}
 
@@ -242,7 +323,11 @@ export default function Dashboard() {
             {filteredEvents.map((e, i) => {
               const eventId = e._id || e.id || i
               const isRegistered = registeredIds.includes(eventId)
+              const isPending = pendingIds.includes(eventId)
               const style = categoryStyles[e.category] || defaultStyle
+              const hasCapacity = e.capacity > 0
+              const seatsLeft = hasCapacity ? Math.max(e.capacity - (e.registeredCount || 0), 0) : null
+              const isFull = hasCapacity && seatsLeft === 0
 
               return (
                 <article
@@ -257,11 +342,31 @@ export default function Dashboard() {
                       <span className={`px-2.5 py-0.5 text-xs font-semibold rounded-lg border ${style.badgeColor}`}>
                         {e.category}
                       </span>
+                      {isAdmin && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => setEditingEvent(e)}
+                            className="px-2.5 py-1 text-[11px] font-semibold text-zinc-600 hover:text-violet-700 hover:bg-violet-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => deleteEvent(e)}
+                            className="px-2.5 py-1 text-[11px] font-semibold text-zinc-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     <h3 className="font-bold text-xl text-zinc-900 group-hover:text-violet-600 transition-colors">
                       {e.title}
                     </h3>
+
+                    {e.description && (
+                      <p className="mt-1.5 text-sm text-zinc-500 leading-relaxed line-clamp-2">{e.description}</p>
+                    )}
 
                     <div className="mt-3.5 p-3 rounded-xl bg-zinc-50/80 border border-zinc-100 text-xs text-zinc-600 space-y-1">
                       <div className="flex items-center justify-between">
@@ -272,22 +377,36 @@ export default function Dashboard() {
                         <span className="text-zinc-400">Venue:</span>
                         <span className="font-medium text-zinc-700">{e.venue}</span>
                       </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-400">Seats:</span>
+                        <span className={`font-medium ${isFull ? 'text-rose-600' : hasCapacity && seatsLeft <= 5 ? 'text-amber-600' : 'text-zinc-700'}`}>
+                          {hasCapacity ? (isFull ? 'Full' : `${seatsLeft} of ${e.capacity} left`) : 'Open entry'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
                   <div className="mt-6 pt-4 border-t border-zinc-100">
                     <button
                       onClick={() => toggleRegister(eventId)}
-                      className={`w-full py-2.5 px-4 text-xs font-semibold rounded-xl active:scale-98 transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer ${
+                      disabled={isPending || (isFull && !isRegistered)}
+                      title={isRegistered ? 'Click to cancel your registration' : undefined}
+                      className={`w-full py-2.5 px-4 text-xs font-semibold rounded-xl active:scale-98 transition-all duration-200 flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0 ${
                         isRegistered
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100/70'
+                          : isFull
+                          ? 'bg-zinc-100 text-zinc-500 border border-zinc-200'
                           : `bg-gradient-to-r ${style.accentColor} text-white shadow-md hover:shadow-lg hover:-translate-y-0.5`
                       }`}
                     >
-                      {isRegistered ? (
+                      {isPending ? (
+                        <span className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin"></span>
+                      ) : isRegistered ? (
                         <>
                           <span className="font-bold">✓</span> Registered
                         </>
+                      ) : isFull ? (
+                        'Event Full'
                       ) : (
                         'Register'
                       )}
@@ -299,6 +418,14 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+
+      {editingEvent && (
+        <EventForm
+          event={editingEvent._id ? editingEvent : null}
+          onSubmit={saveEvent}
+          onClose={() => setEditingEvent(null)}
+        />
+      )}
     </div>
   )
 }

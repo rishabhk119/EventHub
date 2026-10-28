@@ -1,32 +1,38 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
+  const [isSuccess, setIsSuccess] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const navigate = useNavigate()
   const { login } = useAuth()
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault()
+    setIsSuccess(false)
 
     if (!email.trim() || !password.trim()) {
       setMessage('Please enter both email and password.')
       return
     }
 
-    login(email)
-    setMessage(`Login successful as ${email}`)
-    navigate('/dashboard')
-  }
-
-  const isSuccess = message.startsWith('Form submitted successfully')
-
-  const fillDemo = () => {
-    setEmail('student@vesit.ac.in')
-    setPassword('vesit2026')
+    setSubmitting(true)
+    setMessage('')
+    try {
+      const user = await login(email.trim(), password)
+      setIsSuccess(true)
+      setMessage(`Login successful as ${user.email}`)
+      navigate('/dashboard')
+    } catch (error) {
+      // 401 from the API: "Invalid email or password"
+      setMessage(error.message)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -60,7 +66,7 @@ export default function Login() {
             Login to Event<span className="bg-gradient-to-r from-violet-600 to-indigo-600 bg-clip-text text-transparent">Hub</span>
           </h2>
           <p className="mt-2 text-xs sm:text-sm text-zinc-500">
-            React Hooks form demonstration
+            Sign in with your EventHub account
           </p>
         </div>
 
@@ -77,22 +83,14 @@ export default function Login() {
               onChange={(event) => setEmail(event.target.value)}
               className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all duration-200"
               placeholder="you@vesit.ac.in"
+              autoComplete="email"
             />
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-wider text-zinc-700">
-                Password
-              </label>
-              <button
-                type="button"
-                onClick={fillDemo}
-                className="text-[11px] font-semibold bg-gradient-to-r from-violet-600 to-indigo-600 bg-clip-text text-transparent hover:from-violet-700 hover:to-indigo-700 hover:underline"
-              >
-                Autofill Demo
-              </button>
-            </div>
+            <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-wider text-zinc-700 mb-1.5">
+              Password
+            </label>
             <input
               id="password"
               type="password"
@@ -100,15 +98,18 @@ export default function Login() {
               onChange={(event) => setPassword(event.target.value)}
               className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 px-4 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500 transition-all duration-200"
               placeholder="Enter password"
+              autoComplete="current-password"
             />
           </div>
 
           <button
             id="login-submit"
             type="submit"
-            className="w-full mt-2 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 active:scale-98 text-white text-sm font-semibold rounded-xl shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer"
+            disabled={submitting}
+            className="w-full mt-2 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 active:scale-98 text-white text-sm font-semibold rounded-xl shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
           >
-            Login
+            {submitting && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>}
+            {submitting ? 'Logging in...' : 'Login'}
           </button>
         </form>
 
@@ -131,9 +132,9 @@ export default function Login() {
         <div className="mt-6 pt-5 border-t border-zinc-100 text-center">
           <p className="text-xs text-zinc-500">
             Don't have an account?{' '}
-            <a href="#" className="font-semibold bg-gradient-to-r from-violet-600 to-indigo-600 bg-clip-text text-transparent hover:from-violet-700 hover:to-indigo-700 hover:underline">
+            <Link to="/register" className="font-semibold bg-gradient-to-r from-violet-600 to-indigo-600 bg-clip-text text-transparent hover:from-violet-700 hover:to-indigo-700 hover:underline">
               Sign up
-            </a>
+            </Link>
           </p>
         </div>
       </div>
